@@ -4,6 +4,14 @@ export const certificateAddress = "0x826Ae32786D0A3b1988CdecCE14Eade434Bf382d"; 
 
 // ---- CourseManager ABI ----
 export const contractABI = [
+
+  {
+  "inputs": [],
+  "name": "owner",
+  "outputs": [{"internalType": "address", "name": "", "type": "address"}],
+  "stateMutability": "view",
+  "type": "function"
+  },
   // reads
   {
     "inputs": [],
