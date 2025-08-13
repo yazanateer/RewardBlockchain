@@ -1,6 +1,6 @@
 // ---- addresses ----
-export const contractAddress    = "0x8846Cdf71Bb77199f83ED901e827546EEBa8D0e1"; // CourseManager
-export const certificateAddress = "0x826Ae32786D0A3b1988CdecCE14Eade434Bf382d"; // CourseCertificate
+export const contractAddress    = "0x3c5510213B6Bba082E1aB361d08c974E6f28f3F8"; // CourseManager
+export const certificateAddress = "0x5cb1C45d794DecCC40Eec3237EaF2B6998Ba543F"; // CourseCertificate
 
 // ---- CourseManager ABI ----
 export const contractABI = [

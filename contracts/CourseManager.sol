@@ -8,6 +8,7 @@ interface ICourseCertificate {
         address to,
         uint256 courseId,
         string calldata courseTitle,
+        string calldata courseDescription,   // <— NEW
         uint256 completedAt
     ) external returns (uint256 tokenId);
 }
@@ -133,6 +134,7 @@ contract CourseManager is Ownable {
                     msg.sender,
                     courseId,
                     courses[courseId].title,
+                    courses[courseId].description,
                     block.timestamp
                 );
                 certificateTokenId[msg.sender][courseId] = tokenId;
