@@ -51,7 +51,7 @@ export default function Dashboard() {
     return () => window.ethereum.removeListener?.('accountsChanged', handler);
   }, [hasEth]);
 
-  // Initial connect (optional auto-connect)
+  // Initial connect
   useEffect(() => {
     if (!hasEth) return;
     (async () => {
@@ -85,9 +85,6 @@ export default function Dashboard() {
       }
 
       // For each completed course:
-      // - get tokenId via certificateTokenId(account, courseId)
-      // - get course to show title (optional; meta also has name)
-      // - read tokenURI from NFT and parse JSON to get image + minted date (attributes)
       const nft = certificateAddress
         ? new ethers.Contract(certificateAddress, certificateABI, provider)
         : null;
@@ -120,7 +117,6 @@ export default function Dashboard() {
             const meta = JSON.parse(jsonStr);
             image = meta?.image ?? null;
 
-            // attributes include: Completed At (display_type=date, value is unix)
             const attrs = Array.isArray(meta?.attributes) ? meta.attributes : [];
             const found = attrs.find((a) => a?.trait_type === 'Completed At');
             mintedAt = found?.value ?? null;
@@ -150,7 +146,6 @@ export default function Dashboard() {
     load();
   }, [load]);
 
-  // Optional live refresh: listen for CertificateMinted and refresh if it's for this account
   useEffect(() => {
     if (!hasEth || !account) return;
     let mgr;

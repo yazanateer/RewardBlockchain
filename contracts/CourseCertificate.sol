@@ -29,7 +29,6 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         _;
     }
 
-    // NOTE: includes courseDescription and completedAt, so SVG can show both.
     function mintCertificate(
         address to,
         uint256 courseId,
@@ -65,8 +64,6 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         emit CertificateMinted(to, tokenId, courseId);
     }
 
-    /* ---------- helpers: JSON, SVG & date formatting ---------- */
-
     function _imageData(
         string memory titleSVG,
         string memory descSVG,
@@ -84,7 +81,6 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         string memory descForJSON,
         uint256 completedAt
     ) internal pure returns (string memory) {
-        // Keep the numeric Unix timestamp for marketplaces ("display_type":"date")
         return string.concat(
             '{"trait_type":"Course ID","value":', courseId.toString(), '},',
             '{"trait_type":"Course Description","value":"', descForJSON, '"},',
@@ -92,7 +88,6 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         );
     }
 
-    // Escape " and \ for JSON strings
     function _escapeJSON(string memory s) internal pure returns (string memory) {
         bytes memory b = bytes(s);
         bytes memory out = new bytes(b.length * 2);
@@ -106,7 +101,6 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         return string(out);
     }
 
-    // Escape &, <, >, ", ' for SVG text nodes
     function _escapeSVG(string memory s) internal pure returns (string memory) {
         bytes memory b = bytes(s);
         bytes memory out = new bytes(b.length * 6);
@@ -124,7 +118,7 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         return string(out);
     }
 
-    // === UTC date helpers (no external libs) ===
+    // ===  date helpers ===
     uint256 private constant SECONDS_PER_DAY   = 24 * 60 * 60;
     uint256 private constant SECONDS_PER_HOUR  = 60 * 60;
     uint256 private constant SECONDS_PER_MIN   = 60;
@@ -136,10 +130,9 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
     function _daysInMonth(uint256 year, uint256 month) private pure returns (uint256) {
         if (month == 1 || month == 3 || month == 5 || month == 7 || month == 8 || month == 10 || month == 12) return 31;
         if (month == 4 || month == 6 || month == 9 || month == 11) return 30;
-        return _isLeap(year) ? 29 : 28; // February
+        return _isLeap(year) ? 29 : 28;
     }
 
-    // Convert unix seconds -> (year, month, day, hour, minute) in UTC
     function _timestampToYMDHM(uint256 ts)
         private
         pure
@@ -148,11 +141,9 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         uint256 daysSinceEpoch = ts / SECONDS_PER_DAY;
         uint256 secsRemainder  = ts % SECONDS_PER_DAY;
 
-        // time
         hour   = secsRemainder / SECONDS_PER_HOUR;
         minute = (secsRemainder % SECONDS_PER_HOUR) / SECONDS_PER_MIN;
 
-        // date
         year = 1970;
         while (true) {
             uint256 diy = _isLeap(year) ? 366 : 365;
@@ -183,9 +174,7 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
         );
     }
 
-    // Address -> 0x… string
     function _addrHex(address a) private pure returns (string memory) {
-        // 20 bytes for an Ethereum address
         return Strings.toHexString(uint160(a), 20);
     }
 
@@ -212,29 +201,17 @@ contract CourseCertificate is ERC721URIStorage, Ownable {
                     "</defs>",
                     "<rect width='100%' height='100%' fill='url(#g)'/>",
                     "<rect x='24' y='24' width='752' height='472' rx='16' ry='16' fill='white' fill-opacity='0.08' stroke='#93c5fd'/>",
-
                     "<text x='50%' y='110' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='28' fill='#ffffff'>RewardChain Certificate</text>",
                     "<text x='50%' y='170' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='22' fill='#dbeafe'>", title, "</text>",
-
                     "<foreignObject x='80' y='195' width='640' height='70'>",
                         "<div xmlns='http://www.w3.org/1999/xhtml' style='font-family:Arial, Helvetica, sans-serif; color:#dbeafe; font-size:16px; text-align:center;'>",
                             description,
                         "</div>",
                     "</foreignObject>",
-
-                    "<text x='50%' y='285' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='14' fill='#d1d5db'>Owner: ",
-                        ownerStr,
-                    "</text>",
-                    "<text x='50%' y='310' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='14' fill='#d1d5db'>Contract: ",
-                        contractStr,
-                    "</text>",
-
-                    "<text x='50%' y='350' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='16' fill='#c7d2fe'>Completed: ",
-                        prettyUTC,
-                    "</text>",
-                    "<text x='50%' y='390' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='16' fill='#bfdbfe'>Token #",
-                        tokenId.toString(),
-                    "</text>",
+                    "<text x='50%' y='285' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='14' fill='#d1d5db'>Owner: ", ownerStr, "</text>",
+                    "<text x='50%' y='310' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='14' fill='#d1d5db'>Contract: ", contractStr, "</text>",
+                    "<text x='50%' y='350' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='16' fill='#c7d2fe'>Completed: ", prettyUTC, "</text>",
+                    "<text x='50%' y='390' text-anchor='middle' font-family='Arial, Helvetica, sans-serif' font-size='16' fill='#bfdbfe'>Token #", tokenId.toString(), "</text>",
                 "</svg>"
             )
         );

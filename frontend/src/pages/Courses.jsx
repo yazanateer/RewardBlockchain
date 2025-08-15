@@ -1,60 +1,201 @@
 import { useEffect, useState, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { contractAddress, contractABI } from '../contractConfig';
+import { contractAddress, contractABI, tokenAddress, tokenABI } from '../contractConfig';
 import { Swiper, SwiperSlide } from 'swiper/react';
 import { Navigation } from 'swiper/modules';
 import 'swiper/css';
 import 'swiper/css/navigation';
 import CourseCard from '../components/CourseCard';
 
+const toNum = (v) => (typeof v === 'bigint' ? Number(v) : Number(v || 0));
+
 export default function Courses() {
   const [courses, setCourses] = useState([]);
 
+  const [tokenSym, setTokenSym] = useState('EDU');
+  const [tokenDec, setTokenDec] = useState(18);
+  const [rewardWei, setRewardWei] = useState(0n);
+  const [rewardHuman, setRewardHuman] = useState('0');
+
+
+  const computeEligibility = (sched, myTimes, status) => {
+    const now = Math.floor(Date.now() / 1000);
+    const times = Array.from(myTimes).map(toNum);
+    const nextIndex = Math.min(3, times.filter((t) => t > 0).length);
+
+    if (status !== 'registered') {
+      return { canComplete: false, nextAvailableAt: 0, lockedReason: 'Not registered', nextIndex };
+    }
+    if (nextIndex >= 3) {
+      return { canComplete: false, nextAvailableAt: 0, lockedReason: 'Course completed', nextIndex };
+    }
+
+    if (!sched.useSchedule) {
+      return { canComplete: true, nextAvailableAt: 0, lockedReason: '', nextIndex };
+    }
+
+    const nb = sched.notBefore[nextIndex] ? toNum(sched.notBefore[nextIndex]) : 0;
+    const minGap = toNum(sched.minGap);
+    const deadline = toNum(sched.deadline);
+
+    let lockUntil = 0;
+
+    // notBefore constraint
+    if (nb && now < nb) lockUntil = Math.max(lockUntil, nb);
+
+    // minGap from previous milestone
+    if (minGap && nextIndex > 0) {
+      const prevAt = times[nextIndex - 1];
+      if (!prevAt) {
+        return { canComplete: false, nextAvailableAt: 0, lockedReason: 'Previous milestone missing timestamp', nextIndex };
+        }
+      const gapReadyAt = prevAt + minGap;
+      if (now < gapReadyAt) lockUntil = Math.max(lockUntil, gapReadyAt);
+    }
+
+    // deadline constraints
+    if (deadline && now > deadline) {
+      return { canComplete: false, nextAvailableAt: 0, lockedReason: 'Deadline passed', nextIndex };
+    }
+    if (deadline && lockUntil && lockUntil > deadline) {
+      return { canComplete: false, nextAvailableAt: lockUntil, lockedReason: 'Next window is after deadline', nextIndex };
+    }
+
+    if (lockUntil && lockUntil > now) {
+      return { canComplete: false, nextAvailableAt: lockUntil, lockedReason: 'Wait until window', nextIndex };
+    }
+
+    return { canComplete: true, nextAvailableAt: 0, lockedReason: '', nextIndex };
+  };
+
   const fetchAll = useCallback(async () => {
     if (!window.ethereum) return alert("MetaMask is required!");
+
     const provider = new ethers.BrowserProvider(window.ethereum);
     const signer = await provider.getSigner();
     const contract = new ethers.Contract(contractAddress, contractABI, signer);
-    const totalCourses = Number(await contract.courseCount());
-    const fetchedCourses = [];
+
+    // --- token meta + global reward ---
+    let sym = 'EDU';
+    let dec = 18;
+    try {
+      if (tokenAddress && /^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
+        const tk = new ethers.Contract(tokenAddress, tokenABI, provider);
+        sym = await tk.symbol().catch(() => 'EDU');
+        dec = Number(await tk.decimals().catch(() => 18));
+      }
+    } catch {}
+    setTokenSym(sym);
+    setTokenDec(dec);
+
+    let rWei = 0n;
+    try {
+      if (typeof contract.REWARD_PER_COURSE === 'function') {
+        rWei = await contract.REWARD_PER_COURSE();
+      }
+    } catch {}
+    setRewardWei(rWei);
+    setRewardHuman(ethers.formatUnits(rWei, dec));
+
+    // --- load courses ---
+    const totalCourses = toNum(await contract.courseCount());
+    const base = [];
     for (let i = 1; i <= totalCourses; i++) {
-      const [id, title, description, milestones] = await contract.getCourse(i);
-      fetchedCourses.push({
-        id: Number(id),
+      const [id, title, description, milestones, createdAt] = await contract.getCourse(i);
+      base.push({
+        id: toNum(id),
         name: title,
         description,
         milestones: Array.from(milestones).length,
+        createdAt: toNum(createdAt),
         status: 'not-registered',
+        schedule: null,
+        myTimes: [0, 0, 0],
+        gating: { canComplete: false, nextAvailableAt: 0, lockedReason: '', nextIndex: 0 },
+        rewardPaid: false,
+        rewardAmountHuman: ethers.formatUnits(rWei, dec),
       });
     }
-    const myRegisteredIds = (await contract.getMyRegisteredCourses()).map(n => Number(n));
+
+    // registration/completion state
+    const myRegisteredIds = (await contract.getMyRegisteredCourses()).map(toNum);
     const regSet = new Set(myRegisteredIds);
-    const myCompletedIds = (await contract.getMyCompletedCourses()).map(n => Number(n));
+    const myCompletedIds = (await contract.getMyCompletedCourses()).map(toNum);
     const compSet = new Set(myCompletedIds);
-    const merged = fetchedCourses.map(c => {
-      if (compSet.has(c.id)) return { ...c, status: 'completed' };
-      if (regSet.has(c.id)) return { ...c, status: 'registered' };
-      return c;
-    });
-    setCourses(merged);
+
+    // enrich with schedule + my times + gating + reward status
+    const enriched = [];
+    for (const c of base) {
+      const [useSchedule, notBefore, minGap, deadline] = await contract.getCourseSchedule(c.id);
+      const myTimes = await contract.getMyMilestoneTimes(c.id);
+
+      // reward status for me on this course
+      let paid = false;
+      let amt = rWei;
+      try {
+        if (typeof contract.getMyRewardStatus === 'function') {
+          const rs = await contract.getMyRewardStatus(c.id);
+          paid = rs[0];
+          amt = rs[1];
+        }
+      } catch {}
+
+      const status = compSet.has(c.id) ? 'completed' : regSet.has(c.id) ? 'registered' : 'not-registered';
+      const schedule = {
+        useSchedule,
+        notBefore: Array.from(notBefore).map(toNum),
+        minGap: toNum(minGap),
+        deadline: toNum(deadline),
+      };
+      const gating = computeEligibility(schedule, myTimes, status);
+
+      enriched.push({
+        ...c,
+        status,
+        schedule,
+        myTimes: Array.from(myTimes).map(toNum),
+        gating,
+        rewardPaid: paid,
+        rewardAmountHuman: ethers.formatUnits(amt ?? 0n, dec),
+      });
+    }
+
+    setCourses(enriched);
   }, []);
 
   useEffect(() => {
     if (!window.ethereum) return;
-    let contract, handler;
+    let contract;
+    let onCompleted;
+    let onPaid;
     (async () => {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
       contract = new ethers.Contract(contractAddress, contractABI, signer);
-      handler = (user, courseId) => {
+
+      onCompleted = (user, courseId) => {
         setCourses(prev =>
           prev.map(c => (c.id === Number(courseId) ? { ...c, status: 'completed' } : c))
         );
+        fetchAll();
       };
-      contract.on('CourseCompleted', handler);
+      onPaid = (user, courseId) => {
+        setCourses(prev =>
+          prev.map(c => (c.id === Number(courseId) ? { ...c, rewardPaid: true } : c))
+        );
+      };
+
+      contract.on('CourseCompleted', onCompleted);
+      contract.on('RewardPaid', onPaid);
     })();
-    return () => { try { contract?.off('CourseCompleted', handler); } catch {} };
-  }, []);
+
+    return () => {
+      try {
+        if (contract && onCompleted) contract.off('CourseCompleted', onCompleted);
+        if (contract && onPaid) contract.off('RewardPaid', onPaid);
+      } catch {}
+    };
+  }, [fetchAll]);
 
   useEffect(() => { fetchAll(); }, [fetchAll]);
 
@@ -69,6 +210,22 @@ export default function Courses() {
       setCourses(prev =>
         prev.map(c => (c.id === courseId ? { ...c, status: 'registered' } : c))
       );
+      fetchAll();
+    } catch (e) {
+      console.error(e);
+      alert(e.shortMessage || e.message);
+    }
+  };
+
+  const handleComplete = async (courseId, index) => {
+    if (!window.ethereum) return alert("MetaMask is required!");
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const contract = new ethers.Contract(contractAddress, contractABI, signer);
+      const tx = await contract.completeMilestone(courseId, index);
+      await tx.wait();
+      fetchAll();
     } catch (e) {
       console.error(e);
       alert(e.shortMessage || e.message);
@@ -116,7 +273,10 @@ export default function Courses() {
 
   return (
     <div className="min-h-screen text-white px-6 py-12">
-      <h2 className="text-4xl font-extrabold mb-10 text-center">The Courses</h2>
+      <h2 className="text-4xl font-extrabold mb-2 text-center">The Courses</h2>
+      <p className="text-center text-white/80 mb-10">
+        Reward per completed course: <span className="font-semibold">{rewardHuman} {tokenSym}</span>
+      </p>
       
       {sections.map((section, i) => {
         const filteredCourses = courses.filter(c => c.status === section.status);
@@ -149,6 +309,8 @@ export default function Courses() {
                         course={course}
                         section={section}
                         onRegister={() => handleRegister(course.id)}
+                        onComplete={() => handleComplete(course.id, course.gating.nextIndex)}
+                        
                       />
                     </SwiperSlide>
                   ))}
